@@ -26,6 +26,7 @@ function historyHTML(){
  return `${first?`<p>${directionLabel(state.direction)} 첫 시험: <strong>${first.exam.filter(w=>first.grades[w.id]).length} / ${first.exam.length}</strong> · ${first.imported?'이전 버전에서 복원 · 시험 일시 미상':esc(new Date(first.finishedAt).toLocaleDateString('ko-KR'))}</p>`:''}<details><summary>시험 기록 ${state.history.length}회 보기</summary><ol>${state.history.map(h=>`<li>${h.imported?'이전 버전에서 복원 · 시험 일시 미상':esc(new Date(h.finishedAt).toLocaleString('ko-KR'))} · ${h.mode==='wrong'?'오답':h.mode==='due'?'다음날 복습':'전체'} ${h.round}회차 · ${directionLabel(h.direction)} · ${h.exam.filter(w=>h.grades[w.id]).length}/${h.exam.length}<ul>${h.exam.map(w=>`<li>${esc(w.english)} · ${esc(w.korean)} — ${h.grades[w.id]?'맞음':'틀림'}</li>`).join('')}</ul></li>`).join('')}</ol></details>`;
 }
 function render(){
+ document.body.classList.toggle('exam-mode',state.phase==='exam');
  speaker.stop();
  if(state.phase==='setup')renderSetup();else if(state.phase==='exam')renderExam();else renderGrading();
 }
