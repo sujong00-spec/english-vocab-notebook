@@ -1,0 +1,60 @@
+import {existsSync} from 'node:fs';
+import { chromium } from 'playwright';
+import assert from 'node:assert/strict';
+import {mkdir} from 'node:fs/promises';
+const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH || (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':undefined),headless:true,args:['--no-sandbox']});
+const page=await browser.newPage({viewport:{width:1024,height:768}});
+const errors=[];page.on('pageerror',e=>errors.push(e.message));
+try {
+ await page.goto('http://127.0.0.1:4173');
+ await page.getByRole('button',{name:'예시 넣기'}).click();
+ await page.getByRole('button',{name:'단어장 확인하고 저장'}).click();
+ await page.reload();
+ await page.getByRole('button',{name:'시험 시작하기'}).click();
+ assert.equal(await page.getByRole('heading',{name:'사과',exact:true}).count(),1);
+ assert.equal(await page.getByText('apple',{exact:true}).count(),0);
+ await page.getByRole('button',{name:'썼어요 · 다음 문제'}).click();
+ await page.reload();
+ assert.equal(await page.getByRole('heading',{name:'학교',exact:true}).count(),1);
+ for(let i=0;i<3;i++)await page.getByRole('button',{name:'썼어요 · 다음 문제'}).click();
+ await page.getByRole('button',{name:'다 썼어요 · 정답표 보기'}).click();
+ assert.equal(await page.getByText('apple',{exact:true}).count(),1);
+ await page.getByRole('group',{name:'1번 채점',exact:true}).getByRole('button',{name:'맞음',exact:true}).click();
+ await page.getByRole('group',{name:'2번 채점',exact:true}).getByRole('button',{name:'틀림',exact:true}).click();
+ await page.reload();
+ assert.equal(await page.getByRole('group',{name:'2번 채점',exact:true}).getByRole('button',{name:'틀림',exact:true}).getAttribute('aria-pressed'),'true');
+ assert.equal(await page.getByRole('button',{name:'오답 1개 다시 시험'}).isDisabled(),true);
+ for(let i=3;i<=5;i++)await page.getByRole('group',{name:i+'번 채점',exact:true}).getByRole('button',{name:'맞음',exact:true}).click();
+ await page.getByRole('button',{name:'오답 1개 다시 시험'}).click();
+ assert.equal(await page.getByRole('heading',{name:'학교',exact:true}).count(),1);
+ assert.equal(await page.getByText('school',{exact:true}).count(),0);
+ await page.reload();
+ assert.equal(await page.getByRole('heading',{name:'학교',exact:true}).count(),1);
+ await mkdir('test-results',{recursive:true});
+ await page.screenshot({path:'test-results/tablet-exam.png',fullPage:true});
+ await page.getByRole('button',{name:'다 썼어요 · 정답표 보기'}).click();
+ await page.getByRole('group',{name:'1번 채점',exact:true}).getByRole('button',{name:'맞음',exact:true}).click();
+ assert.equal(await page.getByRole('button',{name:'오답 0개 다시 시험'}).isDisabled(),true);
+ await page.getByRole('button',{name:'단어장으로',exact:true}).click();
+ await page.screenshot({path:'test-results/tablet-setup.png',fullPage:true});
+ for(const viewport of [{width:768,height:1024},{width:390,height:844}]){
+ await page.setViewportSize(viewport);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ }
+ // A real image exercises decoding/preprocessing; mock only the network OCR engine.
+ await page.route('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.esm.min.js',route=>route.fulfill({contentType:'text/javascript',body:`async function createWorker(){return {setParameters:async()=>{},recognize:async()=>({data:{text:'1. orange : 오렌지\\n2. pencil : 연필'}}),terminate:async()=>{}}} export default {createWorker};`}));
+ page.on('dialog',d=>d.accept());
+ await page.locator('#photo').setInputFiles('test-results/tablet-exam.png');
+ await page.waitForFunction(()=>document.querySelector('#words').value.includes('orange'));
+ await page.getByRole('button',{name:'단어장 확인하고 저장'}).click();
+ assert.equal(await page.getByText('orange',{exact:true}).count(),1);
+ await page.locator('#words').fill('broken line');
+ await page.getByRole('button',{name:'단어장 확인하고 저장'}).click();
+ assert.equal(await page.getByText('orange',{exact:true}).count(),1);
+ assert.ok((await page.locator('#notice').innerText()).includes('1개 줄'));
+ await page.evaluate(()=>localStorage.setItem('vocab-notebook.v1','{broken'));
+ await page.reload();
+ assert.equal(await page.getByRole('button',{name:'시험 시작하기'}).isDisabled(),true);
+ assert.deepEqual(errors,[]);
+ console.log('PASS: tablet/mobile layout, exam privacy, refresh recovery, partial grading, wrong-only retry, OCR review, invalid rows, corrupt storage');
+} finally {await browser.close();}
