@@ -59,7 +59,7 @@ test('shuffle retains snapshot order on refresh and original numbering',()=>{
 });
 test('v1 migration retains unfinished exam and partial grades',()=>{
  const legacy={version:1,words:pair,phase:'grading',exam:pair,index:1,grades:{[pair[0].id]:true},round:1};
- const migrated=restore(JSON.stringify(legacy));assert.equal(migrated.version,2);assert.deepEqual(migrated.grades,legacy.grades);
+ const migrated=restore(JSON.stringify(legacy));assert.equal(migrated.version,3);assert.deepEqual(migrated.grades,legacy.grades);
  const s=grade(migrated,pair[1].id,false);assert.equal(s.history.length,1);assert.deepEqual(restore(JSON.stringify(s)),s);
 });
 test('incomplete grading cannot start wrong-only round and corrupted history rejected',()=>{
@@ -76,4 +76,30 @@ test('legacy completed exam retained without inventing a historical test date',(
  const legacy={version:1,words:pair,phase:'grading',exam:pair,index:1,grades:{[pair[0].id]:true,[pair[1].id]:false},round:1};
  let s=restore(JSON.stringify(legacy));assert.equal(s.history.length,1);assert.equal(s.history[0].imported,true);
  s=start(s,true);assert.equal(s.history[0].grades[pair[1].id],false);assert.equal(s.history.length,1);
+});
+
+test('directions have independent mistakes, confirmation and daily queues',()=>{
+ const d1=new Date(2026,4,10,10),d2=new Date(2026,4,11,10);
+ let s=complete(start(fresh(pair),{direction:'ko-en',now:d1}),[false,true],d1);
+ s=complete(start(s,{direction:'en-ko',now:d1}),[true,true],d1);
+ assert.equal(stats(s,pair[0].id,'ko-en').errors,1);assert.equal(stats(s,pair[0].id,'en-ko').errors,0);
+ s=complete(start(s,{mode:'due',direction:'en-ko',now:d2}),[true,true],d2);
+ assert.equal(dueWords(s,d2,'en-ko').length,0);assert.equal(dueWords(s,d2,'ko-en').length,2);
+ assert.equal(stats(s,pair[0].id,'en-ko').confirmed,true);assert.equal(stats(s,pair[0].id,'ko-en').confirmed,false);
+});
+test('wrong-only retry cannot change direction and survives refresh',()=>{
+ let s=complete(start(fresh(pair),{direction:'en-ko'}),[false,true]);
+ s=start(s,{mode:'wrong',direction:'ko-en'});assert.equal(s.direction,'en-ko');
+ assert.equal(s.exam.length,1);assert.deepEqual(restore(JSON.stringify(s)),s);
+ assert.throws(()=>start(fresh(pair),{direction:'unknown'}));
+});
+test('v2 records and partial exam migrate to original direction without data loss',()=>{
+ let s=complete(start(fresh(pair)),[false,true]);s=start(s,true);s=advance(s);
+ s.version=2;delete s.direction;s.history.forEach(h=>delete h.direction);
+ const migrated=restore(JSON.stringify(s));assert.equal(migrated.version,3);assert.equal(migrated.direction,'ko-en');
+ assert.equal(migrated.history[0].direction,'ko-en');assert.deepEqual(migrated.exam,s.exam);
+ assert.deepEqual(migrated.grades,s.grades);assert.equal(migrated.round,s.round);
+});
+test('invalid direction in v3 storage is rejected',()=>{
+ const s=fresh(pair);s.direction='broken';assert.deepEqual(restore(JSON.stringify(s)),fresh());
 });

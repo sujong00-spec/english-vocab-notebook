@@ -17,7 +17,7 @@ export function parseWords(text) {
   });
 }
 export const formatWords = words => words.map(w => w.english+' : '+w.korean+(w.pos||w.note?' | '+(w.pos||''):'')+(w.note?' | '+w.note:'')).join('\n');
-export function fresh(words = []) { return { version: 2, words, phase: 'setup', exam: [], index: 0, grades: {}, round: 0, history: [], mode: 'full', startedAt: null }; }
+export function fresh(words = []) { return { version: 3, direction: 'ko-en', words, phase: 'setup', exam: [], index: 0, grades: {}, round: 0, history: [], mode: 'full', startedAt: null }; }
 export function updateWords(state, words) {
   const used = new Set();
   return {...state, phase:'setup', exam:[],index:0,grades:{},words:words.map(w=>{
@@ -28,15 +28,16 @@ export function updateWords(state, words) {
 export function day(date = new Date()) {
   const d = new Date(date);return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
 }
-export function stats(state, id) {
-  const attempts=state.history.filter(h=>h.exam.some(w=>w.id===id)).map(h=>({date:h.finishedAt,correct:h.grades[id]}));
+export const directionLabel = direction => direction==='en-ko'?'영어 → 한글 뜻 쓰기':'한글 뜻 → 영어 쓰기';
+export function stats(state, id, direction = state.direction || 'ko-en') {
+  const attempts=state.history.filter(h=>(h.direction||'ko-en')===direction&&h.exam.some(w=>w.id===id)).map(h=>({date:h.finishedAt,correct:h.grades[id]}));
   const last=attempts.at(-1);
   const sinceWrong=attempts.slice(attempts.findLastIndex(a=>!a.correct)+1);
   return {errors:attempts.filter(a=>!a.correct).length, attempts:attempts.length, last:last?.date, correct:last?.correct,
     confirmed:!!last?.correct && new Set(sinceWrong.filter(a=>a.correct).map(a=>day(a.date))).size>=2};
 }
-export function dueWords(state, now = new Date()) {
-  return state.words.filter(w=>{const s=stats(state,w.id);return s.last && day(s.last)<day(now);});
+export function dueWords(state, now = new Date(), direction = state.direction || 'ko-en') {
+  return state.words.filter(w=>{const s=stats(state,w.id,direction);return s.last && day(s.last)<day(now);});
 }
 export function shuffled(words, random = Math.random) {
   const result=structuredClone(words);
@@ -46,12 +47,14 @@ export function shuffled(words, random = Math.random) {
 export function start(state, options = false) {
   const o = typeof options==='boolean'?{mode:options?'wrong':'full'}:options;
   const mode=o.mode||'full', now=o.now||new Date();
+  const direction=mode==='wrong'?(state.direction||'ko-en'):(o.direction||state.direction||'ko-en');
+  if(!['ko-en','en-ko'].includes(direction))throw new Error('시험 방향을 선택해 주세요.');
   if(mode==='wrong' && !state.exam.every(w=>typeof state.grades[w.id]==='boolean'))throw new Error('모든 문항을 채점해 주세요.');
-  let exam=mode==='wrong'?state.exam.filter(w=>state.grades[w.id]===false):mode==='due'?dueWords(state,now):state.words;
+  let exam=mode==='wrong'?state.exam.filter(w=>state.grades[w.id]===false):mode==='due'?dueWords(state,now,direction):state.words;
   if (!exam.length) throw new Error('시험할 단어가 없습니다.');
   exam=exam.map(w=>({...w,originalNumber:w.originalNumber||state.words.findIndex(o=>o.id===w.id)+1}));
   if(o.shuffle)exam=shuffled(exam,o.random);
-  return {...state,phase:'exam',exam:structuredClone(exam),index:0,grades:{},round:state.round+1,mode,startedAt:new Date(now).toISOString()};
+  return {...state,phase:'exam',exam:structuredClone(exam),index:0,grades:{},round:state.round+1,mode,direction,startedAt:new Date(now).toISOString()};
 }
 export function advance(state) {
   if (state.phase !== 'exam') return state;
@@ -62,7 +65,7 @@ export function grade(state,id,correct,now=new Date()) {
   const next={...state,grades:{...state.grades,[id]:correct}};
   if(next.exam.every(w=>typeof next.grades[w.id]==='boolean')) {
     const previous=state.history.find(h=>h.round===state.round);
-    const record={...(previous?.imported?{imported:true}:{}),round:state.round,mode:state.mode,startedAt:state.startedAt,finishedAt:previous?.finishedAt||new Date(now).toISOString(),exam:structuredClone(state.exam),grades:{...next.grades}};
+    const record={...(previous?.imported?{imported:true}:{}),round:state.round,mode:state.mode,direction:state.direction,startedAt:state.startedAt,finishedAt:previous?.finishedAt||new Date(now).toISOString(),exam:structuredClone(state.exam),grades:{...next.grades}};
     next.history=[...state.history.filter(h=>h.round!==state.round),record];
   }
   return next;
@@ -74,16 +77,17 @@ const validDate=d=>typeof d==='string'&&Number.isFinite(Date.parse(d));
 export function restore(raw) {
   try {
     const s=JSON.parse(raw);
-    if(!s||![1,2].includes(s.version)||!['setup','exam','grading'].includes(s.phase)||!wordList(s.words)||!wordList(s.exam)||!Number.isInteger(s.index)||s.index<0||!Number.isInteger(s.round)||s.round<0||!gradeMap(s.grades))return fresh();
+    if(!s||![1,2,3].includes(s.version)||!['setup','exam','grading'].includes(s.phase)||!wordList(s.words)||!wordList(s.exam)||!Number.isInteger(s.index)||s.index<0||!Number.isInteger(s.round)||s.round<0||!gradeMap(s.grades))return fresh();
     if(s.phase!=='setup'&&(!s.exam.length||s.index>=s.exam.length))return fresh();
     if(s.version===1){
-      const migrated={...fresh(),...s,version:2,history:[],mode:'full',startedAt:null};
+      const migrated={...fresh(),...s,version:3,direction:'ko-en',history:[],mode:'full',startedAt:null};
       // The old format has no timestamps: retain its finished result, marked as imported.
-      if(s.round>0&&s.exam.length&&s.exam.every(w=>typeof s.grades[w.id]==='boolean'))migrated.history=[{round:s.round,mode:'full',startedAt:null,finishedAt:new Date().toISOString(),imported:true,exam:structuredClone(s.exam),grades:{...s.grades}}];
+      if(s.round>0&&s.exam.length&&s.exam.every(w=>typeof s.grades[w.id]==='boolean'))migrated.history=[{round:s.round,mode:'full',direction:'ko-en',startedAt:null,finishedAt:new Date().toISOString(),imported:true,exam:structuredClone(s.exam),grades:{...s.grades}}];
       return migrated;
     }
     if(!['full','wrong','due'].includes(s.mode)||!(s.startedAt===null||validDate(s.startedAt))||!Array.isArray(s.history)||!s.history.every(h=>Number.isInteger(h.round)&&h.round>0&&h.round<=s.round&&['full','wrong','due'].includes(h.mode)&&validDate(h.finishedAt)&&wordList(h.exam)&&h.exam.length&&gradeMap(h.grades)&&h.exam.every(w=>typeof h.grades[w.id]==='boolean'))||new Set(s.history.map(h=>h.round)).size!==s.history.length)return fresh();
-    return s;
+    if(s.version===3&&(!['ko-en','en-ko'].includes(s.direction)||!s.history.every(h=>['ko-en','en-ko'].includes(h.direction))))return fresh();
+    return {...s,version:3,direction:s.direction||'ko-en',history:s.history.map(h=>({...h,direction:h.direction||'ko-en'}))};
   } catch {return fresh();}
 }
 export async function prepareImage(file) {

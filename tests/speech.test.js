@@ -1,0 +1,8 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createSpeaker} from '../speech.js';
+function fake(){const calls=[],status=[];const synthesis={cancel:()=>calls.push('cancel'),getVoices:()=>[{lang:'ko-KR'},{lang:'en-GB'}],speak:u=>calls.push(u)};class Utterance{constructor(text){this.text=text;}}return {calls,status,synthesis,Utterance,onStatus:s=>status.push(s)};}
+test('English pronunciation uses selected English voice and cancels previous playback',()=>{const f=fake(),s=createSpeaker(f);s.speak('take care of');const u=f.calls.at(-1);assert.equal(u.text,'take care of');assert.equal(u.lang,'en-GB');assert.equal(u.rate,.85);assert.equal(f.calls[0],'cancel');s.stop();assert.equal(f.calls.at(-1),'cancel');});
+test('missing or failing speech API offers a readable fallback',()=>{const f=fake();const s=createSpeaker({...f,synthesis:undefined});assert.equal(s.supported,false);s.speak('apple');assert.match(f.status[0],/지원하지/);f.synthesis.speak=()=>{throw Error('disabled');};createSpeaker(f).speak('apple');assert.match(f.status.at(-1),/재생하지 못/);});
+test('canceled old utterances never report stale errors',()=>{const f=fake(),s=createSpeaker(f);s.speak('apple');const u=f.calls.at(-1);s.speak('school');const current=f.calls.at(-1);const n=f.status.length;u.onerror({error:'network'});assert.equal(f.status.length,n);current.onerror({error:'network'});assert.match(f.status.at(-1),/재생하지 못/);});
+test('asynchronous voice availability falls back to English language',()=>{const f=fake();f.synthesis.getVoices=()=>[];createSpeaker(f).speak('apple');assert.equal(f.calls.at(-1).lang,'en-US');});
