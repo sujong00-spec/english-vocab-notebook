@@ -20,6 +20,7 @@ try {
  console.log('Notice: '+await page.locator('#notice').innerText());
  const text=await page.locator('#words').inputValue();console.log('OCR result: '+text);
  assert.match(text,/apple/i);assert.match(text,/사과/);assert.match(text,/school/i);assert.match(text,/학교/);assert.match(text,/friend/i);assert.match(text,/친구/);
+ for(const checkbox of await page.locator('[data-review]').all())await checkbox.check();
  await page.getByRole('button',{name:'단어장 확인하고 저장'}).click();
  assert.equal(await page.locator('.word-list li').count(),3);
  assert.match(await page.locator('#notice').innerText(),/3개 단어를 저장/);
